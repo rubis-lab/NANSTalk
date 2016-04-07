@@ -1,0 +1,391 @@
+package com.android.nanstalk;
+
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.Set;
+
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.ContactsContract.Contacts;
+import android.speech.SpeechRecognizer;
+import android.util.Log;
+import android.content.ContentResolver;
+import android.database.Cursor;
+
+public class CommandManager {
+	public enum Cid	{
+		SYS_EXE,
+		SYS_CTRL,
+		SYS_FINISH,
+		SYS_BACK,
+		SYS_FRONT, 
+		SYS_REAR,
+		SYS_PHONE,
+		SYS_RESET,
+		SYS_MIRACAST,
+		KAKAO_FRIEND_LIST,
+		KAKAO_CHAT_LIST,
+		KAKAO_SEARCH,
+		KAKAO_SEND,
+		KIMGISA_CONTINUE,
+		KIMGISA_YES,
+		KIMGISA_NO,
+		KIMGISA_LOCATION,
+		KIMGISA_MAP,
+		KIMGISA_NAVIGATE,
+		KIMGISA_NAVEND,
+		KMP_START,
+		KMP_STOP,
+		KMP_PLAY,
+		BROWSER_UPSIDE,
+		BROWSER_DOWNSIDE,
+		BROWSER_RIGHTSIDE,
+		BROWSER_LEFTSIDE,
+	}
+	
+	public enum Copt {
+		POSTFIX, 
+		PREFIX,
+		WITHAPP,		
+		WITHCONTENT,
+		WITHCONTACT,
+	}
+	
+	public class Command {
+		public String cmd;		// string command
+		
+		public Set<Copt> options;
+		// is command used as prefix?
+		public boolean isPrefix()		{return options.contains(Copt.PREFIX);}		
+		// is command used as postfix?
+		public boolean isPostfix()		{return options.contains(Copt.POSTFIX);}
+		// is command used with application name?
+		public boolean isWithApp()		{return options.contains(Copt.WITHAPP);}
+		// is command used with non fixed parameter?
+		public boolean isWithContent()	{return options.contains(Copt.WITHCONTENT);}
+		// is command used with contact name?
+		public boolean isWithContact()	{return options.contains(Copt.WITHCONTACT);}
+		// is command used without any parameter? 
+		public boolean isNoParam()		
+		{
+			return !(options.contains(Copt.WITHCONTENT)	|| 
+						options.contains(Copt.WITHAPP)  ||
+						options.contains(Copt.WITHCONTACT));}
+		public int isStatic;	// is command only used with application name?
+		public Cid cid;			// command id
+		
+		public Command(Cid id, String cmd, Set<Copt> options) {
+			this.cid = id;
+			this.cmd = cmd;
+			this.options = options;
+		}		
+	};
+	
+	public class CommandContent	{
+		public String content;
+		public Command cmd;
+		public String appName;
+		public String packageName;
+		public String matchingStr;
+		public String contentOri;
+		public String contact;
+		public int distance;
+		
+		public CommandContent(String appName, Command cmd, String matchingStr) {
+			this.appName = appName;
+			this.packageName = getPackageNameByAppName(appName);
+			this.cmd = cmd;
+			this.content = "";
+			this.matchingStr = matchingStr.replaceAll(" ", ""); 
+			}
+	}
+
+	private static final String TAG = "CommandManager";
+	private ArrayList<String> appList;
+	private ArrayList<CommandContent> cmdAppList;
+	private ArrayList<ArrayList<Command>> cmdList;
+	private ArrayList<String> contactList;
+	private ContentResolver resolver;
+	
+	public CommandManager(ContentResolver resolver) {		
+		this.resolver = resolver;
+		initCmdAppList();
+	}
+	
+	private void initAppList() {
+		appList = new ArrayList<String>();
+		appList.add("");
+		appList.add("Messenger");
+		appList.add("Navigation");
+		appList.add("Video");
+		appList.add("browser");
+	}
+	
+	private void initCmdList() {
+		cmdList = new ArrayList<ArrayList<Command>>();
+		
+		cmdList.add(new ArrayList<Command>());
+		// set common command;
+		ArrayList<Command> commonCmd = cmdList.get(0);
+		// ex. 카카오톡 실행
+		commonCmd.add(new Command(Cid.SYS_EXE,				"on",			EnumSet.of(Copt.POSTFIX, Copt.WITHAPP)));
+		commonCmd.add(new Command(Cid.SYS_FRONT,			"front",		EnumSet.of(Copt.POSTFIX, Copt.WITHAPP)));		
+		commonCmd.add(new Command(Cid.SYS_REAR,				"rear",			EnumSet.of(Copt.POSTFIX, Copt.WITHAPP)));
+		commonCmd.add(new Command(Cid.SYS_PHONE,			"phone",		EnumSet.of(Copt.POSTFIX, Copt.WITHAPP)));
+		
+		// ex. 헬로 카카오톡
+		commonCmd.add(new Command(Cid.SYS_CTRL,				"hello",		EnumSet.of(Copt.PREFIX,	 Copt.WITHAPP)));
+		
+		// ex. 서울대입구 검색
+		commonCmd.add(new Command(Cid.KIMGISA_NAVIGATE,		"navigate",		EnumSet.of(Copt.PREFIX,	 Copt.WITHCONTENT)));
+		commonCmd.add(new Command(Cid.KAKAO_SEND,			"send",			EnumSet.of(Copt.POSTFIX, Copt.WITHCONTENT)));
+		
+		// ex. 계속
+		commonCmd.add(new Command(Cid.KAKAO_FRIEND_LIST,	"friends",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KAKAO_CHAT_LIST,		"chats",		EnumSet.of(Copt.PREFIX)));
+		
+		commonCmd.add(new Command(Cid.KIMGISA_YES,			"yes",			EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KIMGISA_NO,			"no",			EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KIMGISA_CONTINUE,		"continue",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KIMGISA_LOCATION,		"location",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KIMGISA_MAP,			"map",			EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KIMGISA_NAVEND,		"end",			EnumSet.of(Copt.PREFIX)));
+		
+		commonCmd.add(new Command(Cid.KMP_START,			"start",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KMP_STOP,				"stop",			EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.KMP_PLAY,				"play",			EnumSet.of(Copt.PREFIX)));
+		
+		commonCmd.add(new Command(Cid.SYS_RESET,			"reset",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.SYS_FINISH,			"finish",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.SYS_BACK,				"back",			EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.SYS_MIRACAST,			"miracast",		EnumSet.of(Copt.PREFIX)));
+		
+		commonCmd.add(new Command(Cid.BROWSER_UPSIDE,		"upside",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.BROWSER_DOWNSIDE,		"downside",		EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.BROWSER_RIGHTSIDE,	"rightside",	EnumSet.of(Copt.PREFIX)));
+		commonCmd.add(new Command(Cid.BROWSER_LEFTSIDE,		"leftside",		EnumSet.of(Copt.PREFIX)));
+		
+		// ex. 김강욱 검색
+		commonCmd.add(new Command(Cid.KAKAO_SEARCH,			"search",		EnumSet.of(Copt.PREFIX, Copt.WITHCONTACT)));
+	}
+	
+	private void initContactList() {
+		contactList = new ArrayList<String>();
+		try  {
+			Uri people = Contacts.CONTENT_URI;
+			String[] projection = new String[] {Contacts.DISPLAY_NAME};
+			String[] selectionArgs = null;
+			Cursor cursor = resolver.query(people, projection, null, selectionArgs, null);
+			
+			if (cursor.moveToFirst()) {
+				do {
+					String name = cursor.getString(0);
+					contactList.add(name);				
+				} while (cursor.moveToNext());
+			} else {
+				Log.d(TAG, "warning : empty contact");
+			}
+		} catch (Exception e) {
+			Log.d(TAG, e.toString());
+		}
+	}
+	
+	private void initCmdAppList() {
+		initAppList();
+		initCmdList();
+		initContactList();
+
+		cmdAppList = new ArrayList<CommandContent>();
+		// for global command
+		for (int i = 0; i < cmdList.get(0).size(); i++)	{		
+			Command cmd = cmdList.get(0).get(i);
+			if (cmd.isWithApp()) {
+				//iterate except global app name (index = 0)
+				for (int j = 1; j < appList.size(); j++) {
+					String appName = appList.get(j);
+					if (cmd.isPrefix()) {
+						String matchingStr = cmd.cmd + " " + appName;
+						CommandContent content = new CommandContent(appName, cmd, matchingStr);
+						cmdAppList.add(content);
+					}
+					if (cmd.isPostfix()) {
+						String matchingStr = appName + " " + cmd.cmd;
+						CommandContent content = new CommandContent(appName, cmd, matchingStr);
+						cmdAppList.add(content);					
+					}
+				}
+			} else if (cmd.isWithContent() || cmd.isNoParam()) {
+				CommandContent content = new CommandContent("", cmd, cmd.cmd);
+				cmdAppList.add(content);
+			} else if (cmd.isWithContact())	{
+				for (int j = 0; j < contactList.size(); j++) {
+					String name = contactList.get(j);
+					if (cmd.isPrefix()) {
+						String matchingStr = cmd.cmd + " " + name;
+						CommandContent content = new CommandContent("", cmd, matchingStr);
+						content.content = name;
+						content.contact = name;
+						cmdAppList.add(content);
+						Log.d(TAG, "contact : " + name);
+					}
+					if (cmd.isPostfix()) {
+						String matchingStr = name + " " + cmd.cmd;
+						CommandContent content = new CommandContent("", cmd, matchingStr);
+						content.content = name;
+						content.contact = name;
+						cmdAppList.add(content);
+						Log.d(TAG, "contact : " + name);
+					}
+				}
+			}
+		}
+		for (int i = 0; i < cmdAppList.size(); i++) {			
+			CommandContent cmdContent = cmdAppList.get(i);		
+			Log.d(TAG, "command : " + cmdContent.matchingStr);
+		}
+	}
+	
+	private CommandContent findCommand(String text) {
+		int minIdx = -1;
+		int minDistance = 0;
+		int contentIdxStart = -1;
+		int contentIdxEnd = -1;		
+		String str2 = text;
+		String str4 = text.replaceAll(" ", "");
+		for (int i = 0; i < cmdAppList.size(); i++) {			
+			CommandContent cmdContent = cmdAppList.get(i);
+			String str1 = cmdContent.matchingStr;
+
+			if (cmdContent.cmd.isWithApp() || cmdContent.cmd.isNoParam() || cmdContent.cmd.isWithContact()) {
+				int distance = getTextDistance(str1, str4);
+				Log.d(TAG, "result : " + str1 + " / " + str4 + "(" + distance + ")");
+				if (minIdx < 0 || distance < minDistance) {
+					minDistance = distance;
+					minIdx = i;
+					contentIdxStart = -1;
+					contentIdxEnd = -1;		
+					if (distance == 0) 
+						break;
+				}				
+			} else if (cmdContent.cmd.isWithContent()) {
+				int searchrange = 3;
+				for (int len = str1.length() - searchrange; len <= str1.length() + searchrange; len++) {
+					if (len <= 0) continue;
+					if (len > str2.length()) break;
+					if (cmdContent.cmd.isPrefix()) {
+						String str3 = str2.substring(0, len);
+						int distance = getTextDistance(str1, str3);
+						Log.d(TAG, "result : " + str1 + " / " + str3 + "(" + distance + ")");
+						if (minIdx < 0 || distance < minDistance) {
+							minDistance = distance;
+							minIdx = i;
+							contentIdxStart = len;
+							contentIdxEnd = str2.length();
+							if (distance == 0) 
+								break;
+						}						
+					} else if (cmdContent.cmd.isPostfix()) {
+						String str3 = str2.substring(str2.length() - len, str2.length());
+						int distance = getTextDistance(str1, str3);
+						Log.d(TAG, "result : " + str1 + " / " + str3 + "(" + distance + ")");
+						if (minIdx < 0 || distance < minDistance) {
+							minDistance = distance;
+							minIdx = i;
+							contentIdxStart = 0;
+							contentIdxEnd = str2.length()-len;							
+							if (distance == 0) 
+								break;
+						}
+					}
+				}
+				if (minDistance == 0) 
+					break;
+			}
+		}
+		
+		CommandContent ret = cmdAppList.get(minIdx);
+		ret.distance = minDistance;
+		
+		if (contentIdxStart < 0)
+			ret.content = "";
+		else
+			ret.content = str2.substring(contentIdxStart, contentIdxEnd);
+		
+		if (ret.cmd.isWithContact()) {
+			ret.content = ret.contact;
+		}
+		
+		return ret;
+	}
+	
+	private int getTextDistance(String a, String b) {
+		int [] costs = new int [b.length() + 1];
+		for (int i = 0; i < costs.length; i++) {
+			costs[i] = i;
+		}
+		
+		for (int i = 1; i <= a.length(); i++) {
+			costs[0] = i;
+			int nw = i - 1;
+			for (int j = 1; j <= b.length(); j++) {
+				int cj = Math.min(1 + Math.min(costs[j], costs[j - 1]), a.charAt(i - 1) == b.charAt(j - 1) ? nw : nw + 1);
+				nw = costs[j];
+				costs[j] = cj;
+			}
+		}
+		return costs[b.length()];
+	}
+	
+    public CommandContent getResults(Bundle results) {
+        ArrayList<String> texts = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        int minDistance = -1;
+        int minIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+        	// String text = trans(texts.get(i));      
+        	String text = texts.get(i);
+        	CommandContent content;
+        	content = findCommand(text);
+        	if (minDistance < 0 || content.distance < minDistance) {
+        		minDistance = content.distance;        		
+        		minIdx = i;
+        		if (minDistance == 0) 
+        			break;
+        	}        			
+        }
+        
+        for (int i = 0; i < texts.size(); i++){
+        	Log.d(TAG, texts.get(i));
+        }
+
+        CommandContent minContent = findCommand(texts.get(minIdx));
+        minContent.contentOri = texts.get(minIdx);
+        minContent.distance = minDistance;
+        String debugmsg =        		
+        		"ori: " + minContent.contentOri + "\n" +
+        		"app: " + minContent.appName + "\n" + 
+        		"cmd: " + minContent.cmd.cmd + "\n" +
+        		"cid: " + minContent.cmd.cid + "\n" +
+        		"con: " + minContent.content + "\n" +
+        		"fri: " + minContent.contact + "\n" +
+        		"dis: " + minDistance;
+        Log.d(TAG, debugmsg);
+        return minContent;
+    }
+
+    
+	private String getPackageNameByAppName(String appName) {
+		String packageName = "";
+	    if (appName.equalsIgnoreCase("Messenger"))
+	    	//packageName = "com.kakao.talk";
+	    	packageName = "com.facebook.orca";
+	    else if (appName.equalsIgnoreCase("Navigation"))
+	    	packageName = "com.locnall.KimGiSa";
+	    else if (appName.equalsIgnoreCase("Video"))
+	    	packageName = "com.mxtech.videoplayer.ad";
+	    	//packageName = "org.videolan.vlc";
+	    else if (appName.equalsIgnoreCase("Browser"))
+	    	packageName = "com.android.browser";
+	    return packageName;
+	}
+
+}
